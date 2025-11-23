@@ -185,9 +185,9 @@ app.post("/request-uber", async (req, res) => {
 
     // Create the Uber automation task
     let task = `Go to: https://www.uber.com/ar/en/rider-home/?_csid=M7MyYcBDHhTZs_wr_IIR-A&sm_flow_id=sIRFeDgY&state=5q44YLYj563vgMhhh-u6O6YaLdWu6GjxiqW52CP7qK8%3D
-Locate the "Enter destination" field, input the destination "${destination}", then click on the first option from the address suggestions to verify the input, and click the "See prices" button to proceed. Wait 5 seconds for the ride options to load, then click the "Request" button to submit the booking. Wait an additional 15 seconds for the process to complete, and finally return a JSON object containing the text or status displayed on the screen as the final result.
+Locate the "Enter destination" field, input the destination "${destination}". Wait for the dropdown menu to appear with address suggestions. DO NOT click on the "suggestions" label text at the top of the dropdown. Instead, click on the FIRST ACTUAL ADDRESS OPTION in the list below the "suggestions" label (it will contain the street name or location details). After selecting the address, click the "See prices" button to proceed. Wait 5 seconds for the ride options to load, then click the "Request" button to submit the booking. Wait an additional 15 seconds for the process to complete, and finally return a JSON object containing the text or status displayed on the screen as the final result.
 
-IMPORTANT: You are authorized to complete the entire ride request. Do not stop before the final step.
+IMPORTANT: You are authorized to complete the entire ride request. Do not stop before the final step. Remember to click on the actual address in the dropdown, NOT the "suggestions" text label.
 
 Return a JSON object with the status, destination, ride type, price, and confirmation text if successful.`;
 

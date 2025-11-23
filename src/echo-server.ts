@@ -423,8 +423,29 @@ mcp.registerTool(
       }).optional(),
     },
   },
-  async ({ destination }) => {
+  async ({ destination }, extra) => {
     try {
+      // Get progress token from metadata
+      const token = extra._meta?.progressToken;
+
+      // Helper function to send progress notifications
+      const progress = (p: number, total?: number, message?: string) => {
+        if (!token) return; // client didn't ask for progress
+        extra.sendNotification({
+          method: "notifications/progress",
+          params: {
+            progressToken: token,
+            progress: p,
+            total,
+          },
+        } as any);
+        if (message) {
+          console.log(`[Progress ${p}/${total}] ${message}`);
+        }
+      };
+
+      progress(0, 100, "🚀 Starting EVVM payment and Uber ride request...");
+
       // Get private key from environment
       const privateKey = process.env.EVVM_PRIVATE_KEY as `0x${string}`;
 
@@ -433,6 +454,7 @@ mcp.registerTool(
       }
 
       console.log(`\n💳 Making EVVM paid API call to request Uber to ${destination}`);
+      progress(10, 100, "💰 Processing EVVM payment signature...");
 
       // Create axios instance with EVVM payment interceptor
       const api = withEVVMPaymentInterceptor(
@@ -442,38 +464,57 @@ mcp.registerTool(
         privateKey
       );
 
-      // Make the POST request - EVVM payment is handled automatically
-      const response = await api.post("/request-uber", {
-        destination,
-      });
+      progress(20, 100, "📡 Sending request to EVVM server...");
 
-      console.log(`\n✅ EVVM paid Uber request completed for ${destination}`);
+      // Start a progress updater for long-running agent task
+      const startTime = Date.now();
+      const progressInterval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const currentProgress = Math.min(30 + elapsed * 2, 90); // 30-90% during agent work
+        progress(currentProgress, 100, `🤖 Agent processing Uber request... (${elapsed}s elapsed)`);
+      }, 10000);
 
-      // Decode payment response from headers
-      const paymentResponse = decodeEVVMPaymentResponse(
-        response.headers["x-payment-response"]
-      );
+      try {
+        // Make the POST request - EVVM payment is handled automatically
+        const response = await api.post("/request-uber", {
+          destination,
+        });
 
-      const result = {
-        ...response.data,
-        paymentInfo: paymentResponse ? {
-          paid: true,
-          transactionHash: paymentResponse.transactionHash,
-          from: paymentResponse.from,
-          to: paymentResponse.to,
-          amount: paymentResponse.amount,
-        } : {
-          paid: true,
-        }
-      };
+        clearInterval(progressInterval);
+        progress(95, 100, "✅ Uber ride request completed!");
 
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify(result, null, 2)
-        }],
-        structuredContent: result,
-      };
+        console.log(`\n✅ EVVM paid Uber request completed for ${destination}`);
+
+        // Decode payment response from headers
+        const paymentResponse = decodeEVVMPaymentResponse(
+          response.headers["x-payment-response"]
+        );
+
+        const result = {
+          ...response.data,
+          paymentInfo: paymentResponse ? {
+            paid: true,
+            transactionHash: paymentResponse.transactionHash,
+            from: paymentResponse.from,
+            to: paymentResponse.to,
+            amount: paymentResponse.amount,
+          } : {
+            paid: true,
+          }
+        };
+
+        progress(100, 100, "🎉 Complete!");
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }],
+          structuredContent: result,
+        };
+      } finally {
+        clearInterval(progressInterval);
+      }
 
     } catch (error: any) {
       console.error(`\n❌ EVVM paid Uber request failed:`, error);
