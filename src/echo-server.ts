@@ -132,6 +132,83 @@ Return a JSON object with the status, product URL, price, and order ID if succes
   }
 );
 
+mcp.registerTool(
+  "uber_request_ride",
+  {
+    title: "Request Uber Ride",
+    description: "Automates the process of requesting an Uber ride in Argentina. Navigates to Uber, enters destination, sees prices, and requests the ride. Requires Uber account to be logged in.",
+    inputSchema: {
+      destination: z.string().describe("The destination address to input in the 'Enter destination' field"),
+    },
+    outputSchema: {
+      status: z.string(),
+      summary: z.string(),
+      data: z.object({
+        destination: z.string().optional(),
+        rideType: z.string().optional(),
+        price: z.string().optional(),
+        confirmationText: z.string().optional(),
+        error: z.string().optional(),
+      }).optional(),
+    },
+  },
+  async ({ destination }) => {
+    try {
+      const agent = await getAgent();
+
+      // Create a detailed task for the agent using the specific instructions
+      let task = `
+Locate the "Enter destination" field, input the destination "${destination}", then click on the first option from the address suggestions to verify the input, and click the "See prices" button to proceed. Wait 5 seconds for the ride options to load, then click the "Request" button to submit the booking. Wait an additional 15 seconds for the process to complete, and finally return a JSON object containing the text or status displayed on the screen as the final result.
+
+IMPORTANT: You are authorized to complete the entire ride request. Do not stop before the final step.
+
+Return a JSON object with the status, destination, ride type, price, and confirmation text if successful.`;
+
+      console.log(`\n🚗 Uber Ride Request Started: ${destination}`);
+      const result = await agent.processMessage(task);
+
+      // Try to parse the result as JSON
+      let parsedResult;
+      try {
+        parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
+      } catch {
+        // If not JSON, wrap it in a standard response
+        parsedResult = {
+          status: "completed",
+          summary: result,
+          data: { destination }
+        };
+      }
+
+      console.log(`\n✅ Uber Ride Request Completed`);
+
+      return {
+        content: [{
+          type: "text",
+          text: typeof parsedResult === 'string' ? parsedResult : JSON.stringify(parsedResult, null, 2)
+        }],
+        structuredContent: parsedResult,
+      };
+
+    } catch (error: any) {
+      console.error(`\n❌ Uber Ride Request Failed:`, error);
+      const errorResult = {
+        status: "error",
+        summary: `Failed to request Uber ride to ${destination}`,
+        data: {
+          destination,
+          error: error?.message || String(error)
+        }
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(errorResult, null, 2) }],
+        structuredContent: errorResult,
+      };
+    }
+  }
+);
+
 // 3) Handle MCP requests (new transport per request)
 app.post("/mcp", async (req, res) => {
   const transport = new StreamableHTTPServerTransport({
