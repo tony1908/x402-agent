@@ -95,7 +95,7 @@ app.use(paymentMiddleware(
   },
   {
     // Using Polygon Amoy testnet facilitator
-    url: process.env.FACILITATOR_URL || "https://x402.polygon.technology"
+    url: process.env.FACILITATOR_URL || "https://facilitator.x402.rs"
   }
 ));
 
@@ -184,7 +184,7 @@ app.get("/health", (req, res) => {
 });
 
 app.listen(PORT, () => {
-  const facilitatorUrl = process.env.FACILITATOR_URL || "https://x402.polygon.technology";
+  const facilitatorUrl = process.env.FACILITATOR_URL || "https://facilitator.x402.rs";
   console.log(`\n🚀 x402 Payment Server running at http://localhost:${PORT}`);
   console.log(`\n📍 Available endpoints:`);
   console.log(`   GET /health - Free endpoint`);

@@ -1,6 +1,6 @@
 import { Coinbase, Wallet } from "@coinbase/coinbase-sdk";
 import { createWalletClient, http } from "viem";
-import { baseSepolia } from "viem/chains";
+import { baseSepolia, polygonAmoy } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { config } from "dotenv";
 
@@ -9,18 +9,40 @@ config();
 /**
  * Backend Wallet Service
  * This service manages wallets server-side for secure payment handling
- * Uses CDP Wallet SDK with a centralized service pattern
+ * Supports both CDP Wallet SDK (Base) and private key mode (Polygon)
  */
 export class WalletService {
   private wallet: Wallet | null = null;
   private walletAddress: string | null = null;
+  private privateKey: `0x${string}` | null = null;
+  private usePrivateKeyMode: boolean = false;
 
   /**
    * Initialize the wallet service
    */
   async initialize(): Promise<void> {
-    if (this.wallet) {
+    if (this.wallet || this.privateKey) {
       return; // Already initialized
+    }
+
+    // Check if we should use private key mode (for Polygon)
+    if (process.env.POLYGON_PRIVATE_KEY) {
+      console.log("🔑 Using private key mode for Polygon...");
+      this.usePrivateKeyMode = true;
+      this.privateKey = process.env.POLYGON_PRIVATE_KEY as `0x${string}`;
+
+      // Derive address from private key
+      const account = privateKeyToAccount(this.privateKey);
+      this.walletAddress = account.address;
+      console.log(`✅ Wallet initialized: ${this.walletAddress}`);
+      return;
+    }
+
+    // Fall back to CDP Wallet SDK (for Base)
+    if (!process.env.CDP_API_KEY_ID || !process.env.CDP_API_KEY_SECRET) {
+      throw new Error(
+        "Please set either POLYGON_PRIVATE_KEY or (CDP_API_KEY_ID + CDP_API_KEY_SECRET) in your .env file"
+      );
     }
 
     // Configure Coinbase SDK
@@ -65,8 +87,11 @@ export class WalletService {
    * Get or create the wallet (auto-initialize if needed)
    */
   async getWallet(): Promise<Wallet> {
-    if (!this.wallet) {
+    if (!this.wallet && !this.usePrivateKeyMode) {
       await this.initialize();
+    }
+    if (this.usePrivateKeyMode) {
+      throw new Error("Wallet object not available in private key mode");
     }
     return this.wallet!;
   }
@@ -75,7 +100,7 @@ export class WalletService {
    * Get wallet address
    */
   async getAddress(): Promise<string> {
-    if (!this.wallet) {
+    if (!this.wallet && !this.privateKey) {
       await this.initialize();
     }
     return this.walletAddress!;
@@ -85,6 +110,9 @@ export class WalletService {
    * Get wallet ID
    */
   async getWalletId(): Promise<string> {
+    if (this.usePrivateKeyMode) {
+      return this.walletAddress || "";
+    }
     if (!this.wallet) {
       await this.initialize();
     }
@@ -96,6 +124,11 @@ export class WalletService {
    * Get balance for a specific asset
    */
   async getBalance(asset: string = "usdc"): Promise<string> {
+    if (this.usePrivateKeyMode) {
+      // Balance checking not implemented for private key mode
+      return "N/A";
+    }
+
     if (!this.wallet) {
       await this.initialize();
     }
@@ -113,10 +146,16 @@ export class WalletService {
    * Export private key for use with x402-axios
    */
   async getPrivateKey(): Promise<`0x${string}`> {
-    if (!this.wallet) {
+    if (!this.wallet && !this.privateKey) {
       await this.initialize();
     }
 
+    // If using private key mode, return it directly
+    if (this.usePrivateKeyMode && this.privateKey) {
+      return this.privateKey;
+    }
+
+    // Otherwise export from CDP wallet
     const address = await this.wallet!.getDefaultAddress();
     const privateKey = await address.export();
     return privateKey as `0x${string}`;
@@ -125,20 +164,27 @@ export class WalletService {
   /**
    * Create a viem wallet client for signing transactions
    */
-  async createViemWalletClient() {
-    if (!this.wallet) {
+  async createViemWalletClient(network: "base-sepolia" | "polygon-amoy" = "polygon-amoy") {
+    if (!this.wallet && !this.privateKey) {
       await this.initialize();
     }
 
-    // Export private key from CDP wallet
-    const address = await this.wallet!.getDefaultAddress();
-    const privateKey = await address.export();
+    let privateKey: `0x${string}`;
+
+    // Get private key from either mode
+    if (this.usePrivateKeyMode && this.privateKey) {
+      privateKey = this.privateKey;
+    } else {
+      const address = await this.wallet!.getDefaultAddress();
+      privateKey = (await address.export()) as `0x${string}`;
+    }
 
     // Create viem account and wallet client
-    const account = privateKeyToAccount(privateKey as `0x${string}`);
+    const account = privateKeyToAccount(privateKey);
+    const chain = network === "polygon-amoy" ? polygonAmoy : baseSepolia;
     const walletClient = createWalletClient({
       account,
-      chain: baseSepolia,
+      chain,
       transport: http(),
     });
 
@@ -149,7 +195,7 @@ export class WalletService {
    * Display wallet information
    */
   async displayWalletInfo(): Promise<void> {
-    if (!this.wallet) {
+    if (!this.wallet && !this.privateKey) {
       await this.initialize();
     }
 
@@ -157,17 +203,24 @@ export class WalletService {
     console.log("💼 BACKEND WALLET SERVICE - ACCOUNT INFO");
     console.log("═".repeat(70));
     console.log(`📍 Address: ${this.walletAddress}`);
-    console.log(`🆔 Wallet ID: ${this.wallet!.getId()}`);
-    console.log(`🌐 Network: Base Sepolia (Testnet)`);
 
-    // Get balances
-    const ethBalance = await this.getBalance("eth");
-    const usdcBalance = await this.getBalance("usdc");
+    if (this.usePrivateKeyMode) {
+      console.log(`🔑 Mode: Private Key (Polygon)`);
+      console.log(`🌐 Network: Polygon Amoy (Testnet)`);
+      console.log(`🔗 View on explorer: https://amoy.polygonscan.com/address/${this.walletAddress}`);
+    } else {
+      console.log(`🆔 Wallet ID: ${this.wallet!.getId()}`);
+      console.log(`🌐 Network: Base Sepolia (Testnet)`);
 
-    console.log(`💰 ETH Balance: ${ethBalance} ETH`);
-    console.log(`💰 USDC Balance: ${usdcBalance} USDC`);
-    console.log("═".repeat(70));
-    console.log(`🔗 View on explorer: https://sepolia.basescan.org/address/${this.walletAddress}`);
+      // Get balances
+      const ethBalance = await this.getBalance("eth");
+      const usdcBalance = await this.getBalance("usdc");
+
+      console.log(`💰 ETH Balance: ${ethBalance} ETH`);
+      console.log(`💰 USDC Balance: ${usdcBalance} USDC`);
+      console.log(`🔗 View on explorer: https://sepolia.basescan.org/address/${this.walletAddress}`);
+    }
+
     console.log("═".repeat(70) + "\n");
   }
 }
