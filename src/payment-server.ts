@@ -41,7 +41,7 @@ app.use(paymentMiddleware(
     // Weather API endpoint - requires payment
     "GET /weather": {
       price: "$0.001", // 0.001 USDC per request
-      network: "base-sepolia", // Using testnet
+      network: "polygon-amoy", // Using Polygon Amoy testnet
       config: {
         description: "Get current weather data for any location",
         inputSchema: {
@@ -69,7 +69,7 @@ app.use(paymentMiddleware(
     // Uber ride request endpoint - requires payment
     "POST /request-uber": {
       price: "$0.002", // 0.002 USDC per request
-      network: "base-sepolia",
+      network: "polygon-amoy", // Using Polygon Amoy testnet
       config: {
         description: "Request an Uber ride using AI agent automation",
         inputSchema: {
@@ -94,8 +94,8 @@ app.use(paymentMiddleware(
     },
   },
   {
-    // Using testnet facilitator
-    url: "https://x402.org/facilitator"
+    // Using Polygon Amoy testnet facilitator
+    url: process.env.FACILITATOR_URL || "https://x402.polygon.technology"
   }
 ));
 
@@ -141,7 +141,7 @@ IMPORTANT: You are authorized to complete the entire ride request. Do not stop b
 
 Return a JSON object with the status, destination, ride type, price, and confirmation text if successful.`;
 
-    console.log(`\n🚗 Uber Ride Request Started (via Coinbase x402): ${destination}`);
+    console.log(`\n🚗 Uber Ride Request Started (via Polygon x402): ${destination}`);
     const result = await agent.processMessage(task);
 
     // Try to parse the result as JSON
@@ -157,12 +157,12 @@ Return a JSON object with the status, destination, ride type, price, and confirm
       };
     }
 
-    console.log(`\n✅ Uber Ride Request Completed (via Coinbase x402)`);
+    console.log(`\n✅ Uber Ride Request Completed (via Polygon x402)`);
 
     res.json(parsedResult);
 
   } catch (error: any) {
-    console.error(`\n❌ Uber Ride Request Failed (via Coinbase x402):`, error);
+    console.error(`\n❌ Uber Ride Request Failed (via Polygon x402):`, error);
     res.status(500).json({
       status: "error",
       summary: `Failed to request Uber ride to ${destination}`,
@@ -184,12 +184,14 @@ app.get("/health", (req, res) => {
 });
 
 app.listen(PORT, () => {
+  const facilitatorUrl = process.env.FACILITATOR_URL || "https://x402.polygon.technology";
   console.log(`\n🚀 x402 Payment Server running at http://localhost:${PORT}`);
   console.log(`\n📍 Available endpoints:`);
   console.log(`   GET /health - Free endpoint`);
   console.log(`   GET /weather?location=<city> - Paid (0.001 USDC)`);
   console.log(`   POST /request-uber - Paid (0.002 USDC) - AI Agent Service`);
   console.log(`\n💰 Receiving payments at: ${RECEIVER_ADDRESS}`);
-  console.log(`🌐 Network: Base Sepolia (testnet)`);
+  console.log(`🌐 Network: Polygon Amoy (testnet)`);
+  console.log(`🔗 Facilitator: ${facilitatorUrl}`);
   console.log(`\n📝 Try it: curl http://localhost:${PORT}/weather?location=Miami\n`);
 });

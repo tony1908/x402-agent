@@ -217,7 +217,7 @@ mcp.registerTool(
   "get_paid_weather",
   {
     title: "Get Paid Weather Data",
-    description: "Calls a paid x402 API to get weather data for a location. Automatically handles payment with wallet. Requires 0.001 USDC per request.",
+    description: "Calls a paid x402 API to get weather data for a location. Automatically handles payment with wallet on Polygon Amoy. Requires 0.001 USDC per request.",
     inputSchema: {
       location: z.string().describe("City name (e.g., 'Miami', 'Tokyo', 'London')"),
     },
@@ -243,10 +243,10 @@ mcp.registerTool(
       await walletService.initialize();
       const privateKey = await walletService.getPrivateKey();
 
-      console.log(`\n💳 Making paid API call for weather in ${location}`);
+      console.log(`\n💳 Making paid API call for weather in ${location} (Polygon Amoy)`);
 
-      // Create signer for x402 payments
-      const signer = await createSigner("base-sepolia", privateKey as Hex);
+      // Create signer for x402 payments on Polygon Amoy
+      const signer = await createSigner("polygon-amoy", privateKey as Hex);
 
       // Create axios instance with payment interceptor
       const api = withPaymentInterceptor(
@@ -259,7 +259,7 @@ mcp.registerTool(
       // Make the request - payment is handled automatically
       const response = await api.get(`/weather?location=${encodeURIComponent(location)}`);
 
-      console.log(`\n✅ Paid weather data received for ${location}`);
+      console.log(`\n✅ Paid weather data received for ${location} (Polygon Amoy)`);
 
       const result = {
         status: "success",
@@ -538,8 +538,8 @@ mcp.registerTool(
 mcp.registerTool(
   "request_uber_x402",
   {
-    title: "Request Uber Ride (Coinbase x402 Payment)",
-    description: "Calls the Coinbase x402 paid API to request an Uber ride using AI agent automation. Uses facilitator-based payments on Base Sepolia. Requires 0.002 USDC per request.",
+    title: "Request Uber Ride (Polygon x402 Payment)",
+    description: "Calls the Polygon x402 paid API to request an Uber ride using AI agent automation. Uses facilitator-based payments on Polygon Amoy. Requires 0.002 USDC per request.",
     inputSchema: {
       destination: z.string().describe("The destination address for the Uber ride"),
     },
@@ -561,10 +561,10 @@ mcp.registerTool(
       await walletService.initialize();
       const privateKey = await walletService.getPrivateKey();
 
-      console.log(`\n💳 Making Coinbase x402 paid API call to request Uber to ${destination}`);
+      console.log(`\n💳 Making Polygon x402 paid API call to request Uber to ${destination}`);
 
-      // Create signer for x402 payments
-      const signer = await createSigner("base-sepolia", privateKey as Hex);
+      // Create signer for x402 payments on Polygon Amoy
+      const signer = await createSigner("polygon-amoy", privateKey as Hex);
 
       // Create axios instance with payment interceptor
       const api = withPaymentInterceptor(
@@ -579,7 +579,7 @@ mcp.registerTool(
         destination,
       });
 
-      console.log(`\n✅ Coinbase x402 paid Uber request completed for ${destination}`);
+      console.log(`\n✅ Polygon x402 paid Uber request completed for ${destination}`);
 
       return {
         content: [{
@@ -590,7 +590,7 @@ mcp.registerTool(
       };
 
     } catch (error: any) {
-      console.error(`\n❌ Coinbase x402 paid Uber request failed:`, error);
+      console.error(`\n❌ Polygon x402 paid Uber request failed:`, error);
       const errorResult = {
         status: "error",
         summary: `Failed to request Uber to ${destination}`,
