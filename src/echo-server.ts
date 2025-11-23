@@ -396,6 +396,104 @@ mcp.registerTool(
   }
 );
 
+mcp.registerTool(
+  "request_uber_evvm",
+  {
+    title: "Request Uber Ride (EVVM Payment)",
+    description: "Calls the EVVM paid API to request an Uber ride using AI agent automation. Uses EVVM signature-based payments on Sepolia. Requires 2 token units per request.",
+    inputSchema: {
+      destination: z.string().describe("The destination address for the Uber ride"),
+    },
+    outputSchema: {
+      status: z.string(),
+      summary: z.string().optional(),
+      data: z.object({
+        destination: z.string().optional(),
+        rideType: z.string().optional(),
+        price: z.string().optional(),
+        confirmationText: z.string().optional(),
+        error: z.string().optional(),
+      }).optional(),
+      paymentInfo: z.object({
+        paid: z.boolean(),
+        transactionHash: z.string().optional(),
+        from: z.string().optional(),
+        to: z.string().optional(),
+        amount: z.string().optional(),
+      }).optional(),
+    },
+  },
+  async ({ destination }) => {
+    try {
+      // Get private key from environment
+      const privateKey = process.env.EVVM_PRIVATE_KEY as `0x${string}`;
+
+      if (!privateKey) {
+        throw new Error("EVVM_PRIVATE_KEY not found in environment variables");
+      }
+
+      console.log(`\n💳 Making EVVM paid API call to request Uber to ${destination}`);
+
+      // Create axios instance with EVVM payment interceptor
+      const api = withEVVMPaymentInterceptor(
+        axios.create({
+          baseURL: process.env.EVVM_SERVER_URL || "http://localhost:4022",
+        }),
+        privateKey
+      );
+
+      // Make the POST request - EVVM payment is handled automatically
+      const response = await api.post("/request-uber", {
+        destination,
+      });
+
+      console.log(`\n✅ EVVM paid Uber request completed for ${destination}`);
+
+      // Decode payment response from headers
+      const paymentResponse = decodeEVVMPaymentResponse(
+        response.headers["x-payment-response"]
+      );
+
+      const result = {
+        ...response.data,
+        paymentInfo: paymentResponse ? {
+          paid: true,
+          transactionHash: paymentResponse.transactionHash,
+          from: paymentResponse.from,
+          to: paymentResponse.to,
+          amount: paymentResponse.amount,
+        } : {
+          paid: true,
+        }
+      };
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(result, null, 2)
+        }],
+        structuredContent: result,
+      };
+
+    } catch (error: any) {
+      console.error(`\n❌ EVVM paid Uber request failed:`, error);
+      const errorResult = {
+        status: "error",
+        summary: `Failed to request Uber to ${destination}`,
+        data: {
+          destination,
+          error: error?.message || String(error)
+        }
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(errorResult, null, 2) }],
+        structuredContent: errorResult,
+      };
+    }
+  }
+);
+
 // 3) Handle MCP requests (new transport per request)
 app.post("/mcp", async (req, res) => {
   const transport = new StreamableHTTPServerTransport({

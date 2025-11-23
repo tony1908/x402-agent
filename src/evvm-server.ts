@@ -1,12 +1,36 @@
 import express from "express";
 import { evvmPaymentMiddleware } from "@evvm/x402-middleware";
+import { OpenAIAgent } from "./openai-agent.js";
 import dotenv from "dotenv";
 
 // Load environment variables
 dotenv.config();
 
+// Initialize the OpenAI agent for Uber requests
+let agentInstance: OpenAIAgent | null = null;
+
+async function getAgent(): Promise<OpenAIAgent> {
+  if (!agentInstance) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY not found in environment variables');
+    }
+
+    agentInstance = new OpenAIAgent({
+      apiKey,
+      model: 'gpt-5-nano',
+    });
+
+    await agentInstance.initialize();
+  }
+  return agentInstance;
+}
+
 const app = express();
 const PORT = 4022;
+
+// Add JSON body parser middleware
+app.use(express.json());
 
 // Server's relayer private key (used to execute transactions on behalf of users)
 const relayerPrivateKey = process.env.RELAYER_PRIVATE_KEY as `0x${string}`;
@@ -75,6 +99,31 @@ app.use(
           },
         },
       },
+      // Uber ride request endpoint
+      "POST /request-uber": {
+        price: "2", // 2 token units for agent service
+        tokenAddress: usdcSepoliaAddress,
+        evvmID: "2",
+        network: "sepolia",
+        config: {
+          description: "Request an Uber ride using AI agent automation",
+          inputSchema: {
+            type: "object",
+            properties: {
+              destination: { type: "string", description: "Destination address" },
+            },
+            required: ["destination"],
+          },
+          outputSchema: {
+            type: "object",
+            properties: {
+              status: { type: "string" },
+              summary: { type: "string" },
+              data: { type: "object" },
+            },
+          },
+        },
+      },
     },
     {
       // Default EVVM contract address for Sepolia
@@ -119,6 +168,62 @@ app.get("/premium-data", (req, res) => {
   });
 });
 
+// Uber ride request endpoint (with agent logic)
+app.post("/request-uber", async (req, res) => {
+  const { destination } = req.body;
+
+  if (!destination) {
+    return res.status(400).json({
+      status: "error",
+      summary: "Missing destination parameter",
+      data: { error: "destination is required" }
+    });
+  }
+
+  try {
+    const agent = await getAgent();
+
+    // Create the Uber automation task
+    let task = `Go to: https://www.uber.com/ar/en/rider-home/?_csid=M7MyYcBDHhTZs_wr_IIR-A&sm_flow_id=sIRFeDgY&state=5q44YLYj563vgMhhh-u6O6YaLdWu6GjxiqW52CP7qK8%3D
+Locate the "Enter destination" field, input the destination "${destination}", then click on the first option from the address suggestions to verify the input, and click the "See prices" button to proceed. Wait 5 seconds for the ride options to load, then click the "Request" button to submit the booking. Wait an additional 15 seconds for the process to complete, and finally return a JSON object containing the text or status displayed on the screen as the final result.
+
+IMPORTANT: You are authorized to complete the entire ride request. Do not stop before the final step.
+
+Return a JSON object with the status, destination, ride type, price, and confirmation text if successful.`;
+
+    console.log(`\n🚗 Uber Ride Request Started (via EVVM): ${destination}`);
+    const result = await agent.processMessage(task);
+
+    // Try to parse the result as JSON
+    let parsedResult;
+    try {
+      parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
+    } catch {
+      // If not JSON, wrap it in a standard response
+      parsedResult = {
+        status: "completed",
+        summary: result,
+        data: { destination }
+      };
+    }
+
+    console.log(`\n✅ Uber Ride Request Completed (via EVVM)`);
+
+    res.json(parsedResult);
+
+  } catch (error: any) {
+    console.error(`\n❌ Uber Ride Request Failed (via EVVM):`, error);
+    res.status(500).json({
+      status: "error",
+      summary: `Failed to request Uber ride to ${destination}`,
+      data: {
+        destination,
+        error: error?.message || String(error)
+      }
+    });
+  }
+});
+
 // Health check endpoint (free)
 app.get("/health", (req, res) => {
   res.json({
@@ -136,6 +241,7 @@ app.get("/", (req, res) => {
       "/health": "Free - Health check",
       "/weather": "Paid - Weather data (1 token unit via EVVM)",
       "/premium-data": "Paid - Premium market data (1 token unit via EVVM)",
+      "/request-uber": "Paid - Uber ride request via AI agent (2 token units via EVVM)",
     },
   });
 });
@@ -146,6 +252,7 @@ app.listen(PORT, () => {
   console.log(`   GET /health - Free endpoint`);
   console.log(`   GET /weather?location=<city> - Paid (1 token unit via EVVM)`);
   console.log(`   GET /premium-data - Paid (1 token unit via EVVM)`);
+  console.log(`   POST /request-uber - Paid (2 token units via EVVM) - AI Agent Service`);
   console.log(`\n💰 Receiving payments at: ${receivingAddress}`);
   console.log(`🌐 Network: Sepolia testnet`);
   console.log(`📝 EVVM Contract: 0x9902984d86059234c3B6e11D5eAEC55f9627dD0f`);
