@@ -11,12 +11,15 @@
     "mcp:server": "tsx src/echo-server.ts",
     "mcp:tunnel": "npx ngrok http 3000",
     "payment:server": "tsx src/payment-server.ts",
+    "evvm:server": "tsx src/evvm-server.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@coinbase/coinbase-sdk": "latest",
+    "@evvm/x402-client": "file:../evvm/packages/x402-client",
+    "@evvm/x402-middleware": "file:../evvm/packages/x402-middleware",
     "@modelcontextprotocol/sdk": "^1.22.0",
     "axios": "^1.7.7",
     "cors": "^2.8.5",

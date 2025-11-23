@@ -7,6 +7,7 @@ import { OpenAIAgent } from "./openai-agent.js";
 import { walletService } from "./wallet-service.js";
 import axios from "axios";
 import { withPaymentInterceptor, createSigner, type Hex } from "x402-axios";
+import { withEVVMPaymentInterceptor, decodeEVVMPaymentResponse } from "@evvm/x402-client";
 import dotenv from "dotenv";
 
 // Load environment variables
@@ -281,6 +282,104 @@ mcp.registerTool(
 
     } catch (error: any) {
       console.error(`\n❌ Paid weather API call failed:`, error);
+      const errorResult = {
+        status: "error",
+        data: {
+          location,
+          error: error?.message || String(error)
+        }
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(errorResult, null, 2) }],
+        structuredContent: errorResult,
+      };
+    }
+  }
+);
+
+mcp.registerTool(
+  "get_evvm_weather",
+  {
+    title: "Get EVVM Paid Weather Data",
+    description: "Calls a paid EVVM x402 API to get weather data. Uses EVVM signature-based payments on Sepolia. Requires 1 token unit per request.",
+    inputSchema: {
+      location: z.string().describe("City name (e.g., 'Miami', 'Tokyo', 'London')"),
+    },
+    outputSchema: {
+      status: z.string(),
+      data: z.object({
+        location: z.string().optional(),
+        weather: z.string().optional(),
+        temperature: z.number().optional(),
+        humidity: z.number().optional(),
+        timestamp: z.string().optional(),
+        paymentInfo: z.object({
+          paid: z.boolean(),
+          transactionHash: z.string().optional(),
+          from: z.string().optional(),
+          to: z.string().optional(),
+          amount: z.string().optional(),
+        }).optional(),
+        error: z.string().optional(),
+      }).optional(),
+    },
+  },
+  async ({ location }) => {
+    try {
+      // Get private key from wallet service or environment
+      const privateKey = process.env.EVVM_PRIVATE_KEY as `0x${string}`;
+
+      if (!privateKey) {
+        throw new Error("EVVM_PRIVATE_KEY not found in environment variables");
+      }
+
+      console.log(`\n💳 Making EVVM paid API call for weather in ${location}`);
+
+      // Create axios instance with EVVM payment interceptor
+      const api = withEVVMPaymentInterceptor(
+        axios.create({
+          baseURL: process.env.EVVM_SERVER_URL || "http://localhost:4022",
+        }),
+        privateKey
+      );
+
+      // Make the request - EVVM payment is handled automatically
+      const response = await api.get(`/weather?location=${encodeURIComponent(location)}`);
+
+      console.log(`\n✅ EVVM paid weather data received for ${location}`);
+
+      // Decode payment response from headers
+      const paymentResponse = decodeEVVMPaymentResponse(
+        response.headers["x-payment-response"]
+      );
+
+      const result = {
+        status: "success",
+        data: {
+          ...response.data,
+          paymentInfo: paymentResponse ? {
+            paid: true,
+            transactionHash: paymentResponse.transactionHash,
+            from: paymentResponse.from,
+            to: paymentResponse.to,
+            amount: paymentResponse.amount,
+          } : {
+            paid: true,
+          }
+        }
+      };
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(result, null, 2)
+        }],
+        structuredContent: result,
+      };
+
+    } catch (error: any) {
+      console.error(`\n❌ EVVM paid weather API call failed:`, error);
       const errorResult = {
         status: "error",
         data: {
