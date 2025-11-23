@@ -4,6 +4,10 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { OpenAIAgent } from "./openai-agent.js";
+import { walletService } from "./wallet-service.js";
+import axios from "axios";
+import { withPaymentInterceptor, createSigner, type Hex } from "x402-axios";
+import { withEVVMPaymentInterceptor, decodeEVVMPaymentResponse } from "@evvm/x402-client";
 import dotenv from "dotenv";
 
 // Load environment variables
@@ -195,6 +199,401 @@ Return a JSON object with the status, destination, ride type, price, and confirm
       const errorResult = {
         status: "error",
         summary: `Failed to request Uber ride to ${destination}`,
+        data: {
+          destination,
+          error: error?.message || String(error)
+        }
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(errorResult, null, 2) }],
+        structuredContent: errorResult,
+      };
+    }
+  }
+);
+
+mcp.registerTool(
+  "get_paid_weather",
+  {
+    title: "Get Paid Weather Data",
+    description: "Calls a paid x402 API to get weather data for a location. Automatically handles payment with wallet. Requires 0.001 USDC per request.",
+    inputSchema: {
+      location: z.string().describe("City name (e.g., 'Miami', 'Tokyo', 'London')"),
+    },
+    outputSchema: {
+      status: z.string(),
+      data: z.object({
+        location: z.string().optional(),
+        weather: z.string().optional(),
+        temperature: z.number().optional(),
+        humidity: z.number().optional(),
+        timestamp: z.string().optional(),
+        paymentInfo: z.object({
+          paid: z.boolean(),
+          amount: z.string().optional(),
+        }).optional(),
+        error: z.string().optional(),
+      }).optional(),
+    },
+  },
+  async ({ location }) => {
+    try {
+      // Initialize wallet service
+      await walletService.initialize();
+      const privateKey = await walletService.getPrivateKey();
+
+      console.log(`\n💳 Making paid API call for weather in ${location}`);
+
+      // Create signer for x402 payments
+      const signer = await createSigner("base-sepolia", privateKey as Hex);
+
+      // Create axios instance with payment interceptor
+      const api = withPaymentInterceptor(
+        axios.create({
+          baseURL: process.env.PAYMENT_SERVER_URL || "http://localhost:4021",
+        }),
+        signer
+      );
+
+      // Make the request - payment is handled automatically
+      const response = await api.get(`/weather?location=${encodeURIComponent(location)}`);
+
+      console.log(`\n✅ Paid weather data received for ${location}`);
+
+      const result = {
+        status: "success",
+        data: {
+          ...response.data,
+          paymentInfo: {
+            paid: true,
+            amount: "0.001 USDC"
+          }
+        }
+      };
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(result, null, 2)
+        }],
+        structuredContent: result,
+      };
+
+    } catch (error: any) {
+      console.error(`\n❌ Paid weather API call failed:`, error);
+      const errorResult = {
+        status: "error",
+        data: {
+          location,
+          error: error?.message || String(error)
+        }
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(errorResult, null, 2) }],
+        structuredContent: errorResult,
+      };
+    }
+  }
+);
+
+mcp.registerTool(
+  "get_evvm_weather",
+  {
+    title: "Get EVVM Paid Weather Data",
+    description: "Calls a paid EVVM x402 API to get weather data. Uses EVVM signature-based payments on Sepolia. Requires 1 token unit per request.",
+    inputSchema: {
+      location: z.string().describe("City name (e.g., 'Miami', 'Tokyo', 'London')"),
+    },
+    outputSchema: {
+      status: z.string(),
+      data: z.object({
+        location: z.string().optional(),
+        weather: z.string().optional(),
+        temperature: z.number().optional(),
+        humidity: z.number().optional(),
+        timestamp: z.string().optional(),
+        paymentInfo: z.object({
+          paid: z.boolean(),
+          transactionHash: z.string().optional(),
+          from: z.string().optional(),
+          to: z.string().optional(),
+          amount: z.string().optional(),
+        }).optional(),
+        error: z.string().optional(),
+      }).optional(),
+    },
+  },
+  async ({ location }) => {
+    try {
+      // Get private key from wallet service or environment
+      const privateKey = process.env.EVVM_PRIVATE_KEY as `0x${string}`;
+
+      if (!privateKey) {
+        throw new Error("EVVM_PRIVATE_KEY not found in environment variables");
+      }
+
+      console.log(`\n💳 Making EVVM paid API call for weather in ${location}`);
+
+      // Create axios instance with EVVM payment interceptor
+      const api = withEVVMPaymentInterceptor(
+        axios.create({
+          baseURL: process.env.EVVM_SERVER_URL || "http://localhost:4022",
+        }),
+        privateKey
+      );
+
+      // Make the request - EVVM payment is handled automatically
+      const response = await api.get(`/weather?location=${encodeURIComponent(location)}`);
+
+      console.log(`\n✅ EVVM paid weather data received for ${location}`);
+
+      // Decode payment response from headers
+      const paymentResponse = decodeEVVMPaymentResponse(
+        response.headers["x-payment-response"]
+      );
+
+      const result = {
+        status: "success",
+        data: {
+          ...response.data,
+          paymentInfo: paymentResponse ? {
+            paid: true,
+            transactionHash: paymentResponse.transactionHash,
+            from: paymentResponse.from,
+            to: paymentResponse.to,
+            amount: paymentResponse.amount,
+          } : {
+            paid: true,
+          }
+        }
+      };
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(result, null, 2)
+        }],
+        structuredContent: result,
+      };
+
+    } catch (error: any) {
+      console.error(`\n❌ EVVM paid weather API call failed:`, error);
+      const errorResult = {
+        status: "error",
+        data: {
+          location,
+          error: error?.message || String(error)
+        }
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(errorResult, null, 2) }],
+        structuredContent: errorResult,
+      };
+    }
+  }
+);
+
+mcp.registerTool(
+  "request_uber_evvm",
+  {
+    title: "Request Uber Ride (EVVM Payment)",
+    description: "Calls the EVVM paid API to request an Uber ride using AI agent automation. Uses EVVM signature-based payments on Sepolia. Requires 2 token units per request.",
+    inputSchema: {
+      destination: z.string().describe("The destination address for the Uber ride"),
+    },
+    outputSchema: {
+      status: z.string(),
+      summary: z.string().optional(),
+      data: z.object({
+        destination: z.string().optional(),
+        rideType: z.string().optional(),
+        price: z.string().optional(),
+        confirmationText: z.string().optional(),
+        error: z.string().optional(),
+      }).optional(),
+      paymentInfo: z.object({
+        paid: z.boolean(),
+        transactionHash: z.string().optional(),
+        from: z.string().optional(),
+        to: z.string().optional(),
+        amount: z.string().optional(),
+      }).optional(),
+    },
+  },
+  async ({ destination }, extra) => {
+    try {
+      // Get progress token from metadata
+      const token = extra._meta?.progressToken;
+
+      // Helper function to send progress notifications
+      const progress = (p: number, total?: number, message?: string) => {
+        if (!token) return; // client didn't ask for progress
+        extra.sendNotification({
+          method: "notifications/progress",
+          params: {
+            progressToken: token,
+            progress: p,
+            total,
+          },
+        } as any);
+        if (message) {
+          console.log(`[Progress ${p}/${total}] ${message}`);
+        }
+      };
+
+      progress(0, 100, "🚀 Starting EVVM payment and Uber ride request...");
+
+      // Get private key from environment
+      const privateKey = process.env.EVVM_PRIVATE_KEY as `0x${string}`;
+
+      if (!privateKey) {
+        throw new Error("EVVM_PRIVATE_KEY not found in environment variables");
+      }
+
+      console.log(`\n💳 Making EVVM paid API call to request Uber to ${destination}`);
+      progress(10, 100, "💰 Processing EVVM payment signature...");
+
+      // Create axios instance with EVVM payment interceptor
+      const api = withEVVMPaymentInterceptor(
+        axios.create({
+          baseURL: process.env.EVVM_SERVER_URL || "http://localhost:4022",
+        }),
+        privateKey
+      );
+
+      progress(20, 100, "📡 Sending request to EVVM server...");
+
+      // Start a progress updater for long-running agent task
+      const startTime = Date.now();
+      const progressInterval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const currentProgress = Math.min(30 + elapsed * 2, 90); // 30-90% during agent work
+        progress(currentProgress, 100, `🤖 Agent processing Uber request... (${elapsed}s elapsed)`);
+      }, 10000);
+
+      try {
+        // Make the POST request - EVVM payment is handled automatically
+        const response = await api.post("/request-uber", {
+          destination,
+        });
+
+        clearInterval(progressInterval);
+        progress(95, 100, "✅ Uber ride request completed!");
+
+        console.log(`\n✅ EVVM paid Uber request completed for ${destination}`);
+
+        // Decode payment response from headers
+        const paymentResponse = decodeEVVMPaymentResponse(
+          response.headers["x-payment-response"]
+        );
+
+        const result = {
+          ...response.data,
+          paymentInfo: paymentResponse ? {
+            paid: true,
+            transactionHash: paymentResponse.transactionHash,
+            from: paymentResponse.from,
+            to: paymentResponse.to,
+            amount: paymentResponse.amount,
+          } : {
+            paid: true,
+          }
+        };
+
+        progress(100, 100, "🎉 Complete!");
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }],
+          structuredContent: result,
+        };
+      } finally {
+        clearInterval(progressInterval);
+      }
+
+    } catch (error: any) {
+      console.error(`\n❌ EVVM paid Uber request failed:`, error);
+      const errorResult = {
+        status: "error",
+        summary: `Failed to request Uber to ${destination}`,
+        data: {
+          destination,
+          error: error?.message || String(error)
+        }
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(errorResult, null, 2) }],
+        structuredContent: errorResult,
+      };
+    }
+  }
+);
+
+mcp.registerTool(
+  "request_uber_x402",
+  {
+    title: "Request Uber Ride (Coinbase x402 Payment)",
+    description: "Calls the Coinbase x402 paid API to request an Uber ride using AI agent automation. Uses facilitator-based payments on Base Sepolia. Requires 0.002 USDC per request.",
+    inputSchema: {
+      destination: z.string().describe("The destination address for the Uber ride"),
+    },
+    outputSchema: {
+      status: z.string(),
+      summary: z.string().optional(),
+      data: z.object({
+        destination: z.string().optional(),
+        rideType: z.string().optional(),
+        price: z.string().optional(),
+        confirmationText: z.string().optional(),
+        error: z.string().optional(),
+      }).optional(),
+    },
+  },
+  async ({ destination }) => {
+    try {
+      // Initialize wallet service
+      await walletService.initialize();
+      const privateKey = await walletService.getPrivateKey();
+
+      console.log(`\n💳 Making Coinbase x402 paid API call to request Uber to ${destination}`);
+
+      // Create signer for x402 payments
+      const signer = await createSigner("base-sepolia", privateKey as Hex);
+
+      // Create axios instance with payment interceptor
+      const api = withPaymentInterceptor(
+        axios.create({
+          baseURL: process.env.PAYMENT_SERVER_URL || "http://localhost:4021",
+        }),
+        signer
+      );
+
+      // Make the POST request - payment is handled automatically
+      const response = await api.post("/request-uber", {
+        destination,
+      });
+
+      console.log(`\n✅ Coinbase x402 paid Uber request completed for ${destination}`);
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(response.data, null, 2)
+        }],
+        structuredContent: response.data,
+      };
+
+    } catch (error: any) {
+      console.error(`\n❌ Coinbase x402 paid Uber request failed:`, error);
+      const errorResult = {
+        status: "error",
+        summary: `Failed to request Uber to ${destination}`,
         data: {
           destination,
           error: error?.message || String(error)
