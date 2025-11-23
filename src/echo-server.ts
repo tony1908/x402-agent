@@ -4,6 +4,9 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { OpenAIAgent } from "./openai-agent.js";
+import { walletService } from "./wallet-service.js";
+import axios from "axios";
+import { withPaymentInterceptor, createSigner, type Hex } from "x402-axios";
 import dotenv from "dotenv";
 
 // Load environment variables
@@ -197,6 +200,91 @@ Return a JSON object with the status, destination, ride type, price, and confirm
         summary: `Failed to request Uber ride to ${destination}`,
         data: {
           destination,
+          error: error?.message || String(error)
+        }
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(errorResult, null, 2) }],
+        structuredContent: errorResult,
+      };
+    }
+  }
+);
+
+mcp.registerTool(
+  "get_paid_weather",
+  {
+    title: "Get Paid Weather Data",
+    description: "Calls a paid x402 API to get weather data for a location. Automatically handles payment with wallet. Requires 0.001 USDC per request.",
+    inputSchema: {
+      location: z.string().describe("City name (e.g., 'Miami', 'Tokyo', 'London')"),
+    },
+    outputSchema: {
+      status: z.string(),
+      data: z.object({
+        location: z.string().optional(),
+        weather: z.string().optional(),
+        temperature: z.number().optional(),
+        humidity: z.number().optional(),
+        timestamp: z.string().optional(),
+        paymentInfo: z.object({
+          paid: z.boolean(),
+          amount: z.string().optional(),
+        }).optional(),
+        error: z.string().optional(),
+      }).optional(),
+    },
+  },
+  async ({ location }) => {
+    try {
+      // Initialize wallet service
+      await walletService.initialize();
+      const privateKey = await walletService.getPrivateKey();
+
+      console.log(`\n💳 Making paid API call for weather in ${location}`);
+
+      // Create signer for x402 payments
+      const signer = await createSigner("base-sepolia", privateKey as Hex);
+
+      // Create axios instance with payment interceptor
+      const api = withPaymentInterceptor(
+        axios.create({
+          baseURL: process.env.PAYMENT_SERVER_URL || "http://localhost:4021",
+        }),
+        signer
+      );
+
+      // Make the request - payment is handled automatically
+      const response = await api.get(`/weather?location=${encodeURIComponent(location)}`);
+
+      console.log(`\n✅ Paid weather data received for ${location}`);
+
+      const result = {
+        status: "success",
+        data: {
+          ...response.data,
+          paymentInfo: {
+            paid: true,
+            amount: "0.001 USDC"
+          }
+        }
+      };
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(result, null, 2)
+        }],
+        structuredContent: result,
+      };
+
+    } catch (error: any) {
+      console.error(`\n❌ Paid weather API call failed:`, error);
+      const errorResult = {
+        status: "error",
+        data: {
+          location,
           error: error?.message || String(error)
         }
       };
