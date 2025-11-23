@@ -494,6 +494,79 @@ mcp.registerTool(
   }
 );
 
+mcp.registerTool(
+  "request_uber_x402",
+  {
+    title: "Request Uber Ride (Coinbase x402 Payment)",
+    description: "Calls the Coinbase x402 paid API to request an Uber ride using AI agent automation. Uses facilitator-based payments on Base Sepolia. Requires 0.002 USDC per request.",
+    inputSchema: {
+      destination: z.string().describe("The destination address for the Uber ride"),
+    },
+    outputSchema: {
+      status: z.string(),
+      summary: z.string().optional(),
+      data: z.object({
+        destination: z.string().optional(),
+        rideType: z.string().optional(),
+        price: z.string().optional(),
+        confirmationText: z.string().optional(),
+        error: z.string().optional(),
+      }).optional(),
+    },
+  },
+  async ({ destination }) => {
+    try {
+      // Initialize wallet service
+      await walletService.initialize();
+      const privateKey = await walletService.getPrivateKey();
+
+      console.log(`\n💳 Making Coinbase x402 paid API call to request Uber to ${destination}`);
+
+      // Create signer for x402 payments
+      const signer = await createSigner("base-sepolia", privateKey as Hex);
+
+      // Create axios instance with payment interceptor
+      const api = withPaymentInterceptor(
+        axios.create({
+          baseURL: process.env.PAYMENT_SERVER_URL || "http://localhost:4021",
+        }),
+        signer
+      );
+
+      // Make the POST request - payment is handled automatically
+      const response = await api.post("/request-uber", {
+        destination,
+      });
+
+      console.log(`\n✅ Coinbase x402 paid Uber request completed for ${destination}`);
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(response.data, null, 2)
+        }],
+        structuredContent: response.data,
+      };
+
+    } catch (error: any) {
+      console.error(`\n❌ Coinbase x402 paid Uber request failed:`, error);
+      const errorResult = {
+        status: "error",
+        summary: `Failed to request Uber to ${destination}`,
+        data: {
+          destination,
+          error: error?.message || String(error)
+        }
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(errorResult, null, 2) }],
+        structuredContent: errorResult,
+      };
+    }
+  }
+);
+
 // 3) Handle MCP requests (new transport per request)
 app.post("/mcp", async (req, res) => {
   const transport = new StreamableHTTPServerTransport({

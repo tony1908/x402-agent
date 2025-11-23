@@ -1,8 +1,36 @@
 import express from "express";
 import { paymentMiddleware } from "x402-express";
+import { OpenAIAgent } from "./openai-agent.js";
+import dotenv from "dotenv";
+
+// Load environment variables
+dotenv.config();
+
+// Initialize the OpenAI agent for Uber requests
+let agentInstance: OpenAIAgent | null = null;
+
+async function getAgent(): Promise<OpenAIAgent> {
+  if (!agentInstance) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY not found in environment variables');
+    }
+
+    agentInstance = new OpenAIAgent({
+      apiKey,
+      model: 'gpt-5-nano',
+    });
+
+    await agentInstance.initialize();
+  }
+  return agentInstance;
+}
 
 const app = express();
 const PORT = 4021;
+
+// Add JSON body parser middleware
+app.use(express.json());
 
 // Your wallet address to receive payments (replace with your actual address)
 const RECEIVER_ADDRESS = process.env.RECEIVER_ADDRESS || "0x742d35Cc6634C0532925a3b844Bc454e4438f44e";
@@ -38,6 +66,32 @@ app.use(paymentMiddleware(
         } as any
       }
     },
+    // Uber ride request endpoint - requires payment
+    "POST /request-uber": {
+      price: "$0.002", // 0.002 USDC per request
+      network: "base-sepolia",
+      config: {
+        description: "Request an Uber ride using AI agent automation",
+        inputSchema: {
+          type: "object",
+          properties: {
+            destination: {
+              type: "string",
+              description: "Destination address"
+            }
+          },
+          required: ["destination"]
+        } as any,
+        outputSchema: {
+          type: "object",
+          properties: {
+            status: { type: "string" },
+            summary: { type: "string" },
+            data: { type: "object" }
+          }
+        } as any
+      }
+    },
   },
   {
     // Using testnet facilitator
@@ -64,6 +118,62 @@ app.get("/weather", (req, res) => {
   });
 });
 
+// Uber ride request endpoint (with agent logic)
+app.post("/request-uber", async (req, res) => {
+  const { destination } = req.body;
+
+  if (!destination) {
+    return res.status(400).json({
+      status: "error",
+      summary: "Missing destination parameter",
+      data: { error: "destination is required" }
+    });
+  }
+
+  try {
+    const agent = await getAgent();
+
+    // Create the Uber automation task
+    let task = `Go to: https://www.uber.com/ar/en/rider-home/?_csid=M7MyYcBDHhTZs_wr_IIR-A&sm_flow_id=sIRFeDgY&state=5q44YLYj563vgMhhh-u6O6YaLdWu6GjxiqW52CP7qK8%3D
+Locate the "Enter destination" field, input the destination "${destination}", then click on the first option from the address suggestions to verify the input, and click the "See prices" button to proceed. Wait 5 seconds for the ride options to load, then click the "Request" button to submit the booking. Wait an additional 15 seconds for the process to complete, and finally return a JSON object containing the text or status displayed on the screen as the final result.
+
+IMPORTANT: You are authorized to complete the entire ride request. Do not stop before the final step.
+
+Return a JSON object with the status, destination, ride type, price, and confirmation text if successful.`;
+
+    console.log(`\n🚗 Uber Ride Request Started (via Coinbase x402): ${destination}`);
+    const result = await agent.processMessage(task);
+
+    // Try to parse the result as JSON
+    let parsedResult;
+    try {
+      parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
+    } catch {
+      // If not JSON, wrap it in a standard response
+      parsedResult = {
+        status: "completed",
+        summary: result,
+        data: { destination }
+      };
+    }
+
+    console.log(`\n✅ Uber Ride Request Completed (via Coinbase x402)`);
+
+    res.json(parsedResult);
+
+  } catch (error: any) {
+    console.error(`\n❌ Uber Ride Request Failed (via Coinbase x402):`, error);
+    res.status(500).json({
+      status: "error",
+      summary: `Failed to request Uber ride to ${destination}`,
+      data: {
+        destination,
+        error: error?.message || String(error)
+      }
+    });
+  }
+});
+
 // Health check endpoint (free)
 app.get("/health", (req, res) => {
   res.json({
@@ -78,6 +188,7 @@ app.listen(PORT, () => {
   console.log(`\n📍 Available endpoints:`);
   console.log(`   GET /health - Free endpoint`);
   console.log(`   GET /weather?location=<city> - Paid (0.001 USDC)`);
+  console.log(`   POST /request-uber - Paid (0.002 USDC) - AI Agent Service`);
   console.log(`\n💰 Receiving payments at: ${RECEIVER_ADDRESS}`);
   console.log(`🌐 Network: Base Sepolia (testnet)`);
   console.log(`\n📝 Try it: curl http://localhost:${PORT}/weather?location=Miami\n`);
